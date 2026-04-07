@@ -15,7 +15,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
     raise ValueError("HF_TOKEN environment variable is required")
 
-IMAGE_NAME = os.getenv("IMAGE_NAME", "api_security_openenv-env:latest")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "api-security-openenv:latest")
 BENCHMARK = "api_security_openenv"
 MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.9
@@ -209,7 +209,7 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    env = await ApiSecurityOpenenvEnv.from_docker_image(IMAGE_NAME)
+    env = await ApiSecurityOpenenvEnv.from_docker_image(LOCAL_IMAGE_NAME)
     try:
         for _ in range(3):
             await run_episode(env, client)

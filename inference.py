@@ -47,10 +47,10 @@ def log_step(step: int, action: str, reward: float, done: bool, error: str | Non
     )
 
 
-def log_end(success: bool, steps: int, rewards: list[float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
     rewards_text = ",".join(_format_reward(r) for r in rewards)
     print(
-        f"[END] success={_format_bool(success)} steps={steps} rewards={rewards_text}",
+        f"[END] success={_format_bool(success)} steps={steps} score={_format_reward(score)} rewards={rewards_text}",
         flush=True,
     )
 
@@ -201,8 +201,10 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
             error=error,
         )
 
-    success = bool(rewards and max(rewards) >= SUCCESS_SCORE_THRESHOLD)
-    log_end(success=success, steps=steps_taken, rewards=rewards)
+    score = max(rewards) if rewards else 0.0
+    score = min(max(score, 0.0), 1.0)
+    success = bool(score >= SUCCESS_SCORE_THRESHOLD)
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     return task_id, success, steps_taken, rewards
 
 

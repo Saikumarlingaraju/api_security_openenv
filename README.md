@@ -149,16 +149,16 @@ A mandatory inference script is included at project root:
 
 It uses the OpenAI client and required environment variables:
 
-- `API_BASE_URL` (default provided)
+- `API_BASE_URL` (injected by evaluator)
 - `MODEL_NAME` (default provided)
-- `HF_TOKEN` (required)
+- `API_KEY` (injected by evaluator)
 
 Run baseline:
 
 ```bash
 set API_BASE_URL=https://api.openai.com/v1
 set MODEL_NAME=gpt-4.1-mini
-set HF_TOKEN=your_token_here
+set API_KEY=your_token_here
 python inference.py
 ```
 

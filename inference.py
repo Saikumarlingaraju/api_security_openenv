@@ -9,30 +9,18 @@ from openai import OpenAI
 from client import ApiSecurityOpenenvEnv
 from models import ApiSecurityOpenenvAction
 
-API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or "Qwen/Qwen2.5-72B-Instruct"
-
-
-def _resolve_api_key() -> str:
-    candidates = [
-        os.getenv("API_KEY"),
-        os.getenv("OPENAI_API_KEY"),
-        os.getenv("HF_TOKEN"),
-        os.getenv("HUGGINGFACEHUB_API_TOKEN"),
-        os.getenv("HUGGING_FACE_HUB_TOKEN"),
-    ]
-    for candidate in candidates:
-        if candidate:
-            return candidate
-    # Keep attempting proxy calls even when key injection is missing.
-    return "missing-key"
-
-
-API_KEY = _resolve_api_key()
 
 BENCHMARK = "api_security_openenv"
 MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.9
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value.strip()
 
 
 def _list_local_images() -> set[str]:
@@ -344,7 +332,10 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    # Hackathon evaluator injects API_BASE_URL and API_KEY for proxy verification.
+    api_base_url = _required_env("API_BASE_URL")
+    api_key = _required_env("API_KEY")
+    client = OpenAI(base_url=api_base_url, api_key=api_key)
     image_name = _resolve_local_image_name()
 
     env: ApiSecurityOpenenvEnv | None = None

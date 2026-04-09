@@ -181,21 +181,23 @@ class ApiSecurityOpenenvEnvironment(Environment):
     """Environment for auditing vulnerable API snippets."""
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    _GLOBAL_TASK_CURSOR: int = 0
 
     def __init__(self):
         self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._task_cursor = 0
         self._current_task = TASKS[0]
         self._steps_in_episode = 0
         self._best_score = 0.0
         self._last_feedback = ""
         self._last_breakdown: dict[str, float] = {}
         self._last_action_signature = ""
+        self._task_sequence_index = 0
 
     def reset(self) -> ApiSecurityOpenenvObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._current_task = TASKS[self._task_cursor % len(TASKS)]
-        self._task_cursor += 1
+        self._task_sequence_index = ApiSecurityOpenenvEnvironment._GLOBAL_TASK_CURSOR
+        self._current_task = TASKS[self._task_sequence_index % len(TASKS)]
+        ApiSecurityOpenenvEnvironment._GLOBAL_TASK_CURSOR += 1
         self._steps_in_episode = 0
         self._best_score = 0.0
         self._last_feedback = "Submit vulnerabilities, severity, and fixes to be graded."
@@ -204,8 +206,8 @@ class ApiSecurityOpenenvEnvironment(Environment):
 
         return self._build_observation(
             done=False,
-            reward=0.0,
-            score=0.0,
+            reward=OPEN_INTERVAL_MIN_SCORE,
+            score=OPEN_INTERVAL_MIN_SCORE,
             feedback=self._last_feedback,
             breakdown=self._last_breakdown,
         )
@@ -336,7 +338,7 @@ class ApiSecurityOpenenvEnvironment(Environment):
             reward=reward,
             metadata={
                 "step": self._state.step_count,
-                "task_sequence_index": self._task_cursor,
+                "task_sequence_index": self._task_sequence_index,
             },
         )
 

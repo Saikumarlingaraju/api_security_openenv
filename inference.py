@@ -16,6 +16,9 @@ MODEL_NAME = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or "Qwen/Qwen2
 BENCHMARK = "api_security_openenv"
 MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.9
+MIN_LOG_SCORE = 0.01
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def _list_local_images() -> set[str]:
@@ -130,6 +133,40 @@ def _resolve_local_image_name() -> str:
     return candidates[0]
 
 
+def _candidate_image_names() -> list[str]:
+    preferred = _resolve_local_image_name()
+    available = list(_list_local_images())
+
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def add_name(name: str | None) -> None:
+        if not name:
+            return
+        norm = name.strip()
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        names.append(norm)
+
+    add_name(os.getenv("LOCAL_IMAGE_NAME"))
+    add_name(preferred)
+    add_name("api-security-openenv:latest")
+    add_name("api_security_openenv:latest")
+    add_name("api_security_openenv-env:latest")
+    add_name("api-security-openenv-env:latest")
+
+    for image in available:
+        if "api-security-openenv" in image or "api_security_openenv" in image:
+            add_name(image)
+
+    # Last-resort fallback: try a few locally available images.
+    for image in available[:8]:
+        add_name(image)
+
+    return names
+
+
 def _docker_image_exists(image_name: str) -> bool:
     try:
         proc = subprocess.run(
@@ -146,16 +183,18 @@ def _docker_image_exists(image_name: str) -> bool:
         return False
 
 
-def _ensure_local_image(image_name: str) -> None:
+def _ensure_local_image(image_name: str) -> bool:
     if _docker_image_exists(image_name):
-        return
+        return True
 
-    subprocess.run(
+    proc = subprocess.run(
         ["docker", "build", "-t", image_name, "."],
         check=False,
         capture_output=True,
         text=True,
+        cwd=PROJECT_ROOT,
     )
+    return proc.returncode == 0 and _docker_image_exists(image_name)
 
 
 def _format_bool(value: bool) -> str:
@@ -163,7 +202,8 @@ def _format_bool(value: bool) -> str:
 
 
 def _format_reward(value: float) -> str:
-    return f"{value:.2f}"
+    clamped = max(MIN_LOG_SCORE, min(0.99, value))
+    return f"{clamped:.2f}"
 
 
 def _safe_action_log(action: dict[str, Any]) -> str:
@@ -305,9 +345,9 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
         obs = reset_result.observation
     except Exception as exc:
         log_start(task="reset_error", env=BENCHMARK, model=MODEL_NAME)
-        log_step(step=1, action="reset", reward=0.0, done=True, error=str(exc).replace("\n", " "))
-        log_end(success=False, steps=1, score=0.0, rewards=[0.0])
-        return "reset_error", False, 1, [0.0]
+        log_step(step=1, action="reset", reward=MIN_LOG_SCORE, done=True, error=str(exc).replace("\n", " "))
+        log_end(success=False, steps=1, score=MIN_LOG_SCORE, rewards=[MIN_LOG_SCORE])
+        return "reset_error", False, 1, [MIN_LOG_SCORE]
 
     task_id = obs.task_id
     rewards: list[float] = []
@@ -342,9 +382,9 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
             )
         except Exception as exc:
             error_text = str(exc).replace("\n", " ")
-            rewards.append(0.0)
+            rewards.append(MIN_LOG_SCORE)
             steps_taken = step
-            log_step(step=step, action=_safe_action_log(action_payload), reward=0.0, done=True, error=error_text)
+            log_step(step=step, action=_safe_action_log(action_payload), reward=MIN_LOG_SCORE, done=True, error=error_text)
             break
 
         obs = result.observation
@@ -374,20 +414,34 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 async def main() -> None:
     # Hackathon evaluator injects API_BASE_URL and API_KEY for proxy verification.
     client = OpenAI(base_url=os.environ["API_BASE_URL"], api_key=os.environ["API_KEY"])
-    image_name = _resolve_local_image_name()
+    image_names = _candidate_image_names()
 
     env: ApiSecurityOpenenvEnv | None = None
     try:
         _probe_llm_proxy(client)
-        _ensure_local_image(image_name)
-        env = await ApiSecurityOpenenvEnv.from_docker_image(image_name)
+
+        last_error = "Unable to start environment from any local Docker image."
+        chosen_image = "unknown"
+        for image_name in image_names:
+            _ensure_local_image(image_name)
+            try:
+                env = await ApiSecurityOpenenvEnv.from_docker_image(image_name)
+                chosen_image = image_name
+                break
+            except Exception as exc:
+                last_error = f"{image_name}: {str(exc).replace(chr(10), ' ')}"
+
+        if env is None:
+            raise RuntimeError(last_error)
+
         for _ in range(3):
             await run_episode(env, client)
     except Exception as exc:
         error_text = str(exc).replace("\n", " ")
         log_start(task="bootstrap_error", env=BENCHMARK, model=MODEL_NAME)
-        log_step(step=1, action=f"from_docker_image({image_name})", reward=0.0, done=True, error=error_text)
-        log_end(success=False, steps=1, score=0.0, rewards=[0.0])
+        action_name = "from_docker_image(candidates)"
+        log_step(step=1, action=action_name, reward=MIN_LOG_SCORE, done=True, error=error_text)
+        log_end(success=False, steps=1, score=MIN_LOG_SCORE, rewards=[MIN_LOG_SCORE])
     finally:
         if env is not None:
             try:

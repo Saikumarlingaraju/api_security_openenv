@@ -9,10 +9,12 @@ from openai import OpenAI
 from client import ApiSecurityOpenenvEnv
 from models import ApiSecurityOpenenvAction
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
-API_KEY = os.getenv("API_KEY") or HF_TOKEN
+
+_injected_api_key = os.getenv("API_KEY")
+API_KEY = _injected_api_key if _injected_api_key is not None else HF_TOKEN
 
 if not API_KEY:
     raise ValueError("API_KEY or HF_TOKEN environment variable is required")
@@ -184,18 +186,31 @@ def _build_model_prompt(task_id: str, objective: str, code_snippet: str, feedbac
 
 
 def _get_model_action(client: OpenAI, prompt: str, task_id: str) -> dict[str, Any]:
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            temperature=0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        content = response.choices[0].message.content or ""
-        parsed = _extract_json(content)
-        if parsed:
-            return parsed
-    except Exception:
-        pass
+    model_candidates = [
+        MODEL_NAME,
+        "Qwen/Qwen2.5-72B-Instruct",
+        "meta-llama/Llama-3.1-8B-Instruct",
+    ]
+
+    seen: set[str] = set()
+    for model_name in model_candidates:
+        if model_name in seen:
+            continue
+        seen.add(model_name)
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                temperature=0,
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = response.choices[0].message.content or ""
+            parsed = _extract_json(content)
+            if parsed:
+                return parsed
+        except Exception:
+            continue
 
     return _fallback_action(task_id)
 

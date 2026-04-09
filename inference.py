@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 from typing import Any
 
 from openai import OpenAI
@@ -15,10 +16,76 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
     raise ValueError("HF_TOKEN environment variable is required")
 
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "api-security-openenv:latest")
 BENCHMARK = "api_security_openenv"
 MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.9
+
+
+def _list_local_images() -> set[str]:
+    try:
+        proc = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return set()
+        return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    except Exception:
+        return set()
+
+
+def _resolve_local_image_name() -> str:
+    env_image = os.getenv("LOCAL_IMAGE_NAME")
+    if env_image:
+        return env_image
+
+    candidates = [
+        "api-security-openenv:latest",
+        "api_security_openenv:latest",
+        "api_security_openenv-env:latest",
+        "api-security-openenv-env:latest",
+    ]
+
+    available = _list_local_images()
+    for candidate in candidates:
+        if candidate in available:
+            return candidate
+
+    for image in available:
+        if "api-security-openenv" in image or "api_security_openenv" in image:
+            return image
+
+    return candidates[0]
+
+
+def _docker_image_exists(image_name: str) -> bool:
+    try:
+        proc = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return False
+        images = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+        return image_name in images
+    except Exception:
+        return False
+
+
+def _ensure_local_image(image_name: str) -> None:
+    if _docker_image_exists(image_name):
+        return
+
+    subprocess.run(
+        ["docker", "build", "-t", image_name, "."],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _format_bool(value: bool) -> str:
@@ -150,8 +217,14 @@ def _normalize_action(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, bool, int, list[float]]:
-    reset_result = await env.reset()
-    obs = reset_result.observation
+    try:
+        reset_result = await env.reset()
+        obs = reset_result.observation
+    except Exception as exc:
+        log_start(task="reset_error", env=BENCHMARK, model=MODEL_NAME)
+        log_step(step=1, action="reset", reward=0.0, done=True, error=str(exc).replace("\n", " "))
+        log_end(success=False, steps=1, score=0.0, rewards=[0.0])
+        return "reset_error", False, 1, [0.0]
 
     task_id = obs.task_id
     rewards: list[float] = []
@@ -175,14 +248,21 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
         raw_action = _get_model_action(client, prompt, task_id)
         action_payload = _normalize_action(raw_action)
 
-        result = await env.step(
-            ApiSecurityOpenenvAction(
-                vulnerabilities=action_payload["vulnerabilities"],
-                severity=action_payload["severity"],
-                fixes=action_payload["fixes"],
-                rationale=action_payload["rationale"],
+        try:
+            result = await env.step(
+                ApiSecurityOpenenvAction(
+                    vulnerabilities=action_payload["vulnerabilities"],
+                    severity=action_payload["severity"],
+                    fixes=action_payload["fixes"],
+                    rationale=action_payload["rationale"],
+                )
             )
-        )
+        except Exception as exc:
+            error_text = str(exc).replace("\n", " ")
+            rewards.append(0.0)
+            steps_taken = step
+            log_step(step=step, action=_safe_action_log(action_payload), reward=0.0, done=True, error=error_text)
+            break
 
         obs = result.observation
         reward = float(result.reward or 0.0)
@@ -210,13 +290,25 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    image_name = _resolve_local_image_name()
 
-    env = await ApiSecurityOpenenvEnv.from_docker_image(LOCAL_IMAGE_NAME)
+    env: ApiSecurityOpenenvEnv | None = None
     try:
+        _ensure_local_image(image_name)
+        env = await ApiSecurityOpenenvEnv.from_docker_image(image_name)
         for _ in range(3):
             await run_episode(env, client)
+    except Exception as exc:
+        error_text = str(exc).replace("\n", " ")
+        log_start(task="bootstrap_error", env=BENCHMARK, model=MODEL_NAME)
+        log_step(step=1, action=f"from_docker_image({image_name})", reward=0.0, done=True, error=error_text)
+        log_end(success=False, steps=1, score=0.0, rewards=[0.0])
     finally:
-        await env.close()
+        if env is not None:
+            try:
+                await env.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

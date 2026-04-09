@@ -16,13 +16,6 @@ MAX_STEPS = 3
 SUCCESS_SCORE_THRESHOLD = 0.9
 
 
-def _required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if value is None or value.strip() == "":
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value.strip()
-
-
 def _list_local_images() -> set[str]:
     try:
         proc = subprocess.run(
@@ -333,9 +326,7 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 
 async def main() -> None:
     # Hackathon evaluator injects API_BASE_URL and API_KEY for proxy verification.
-    api_base_url = _required_env("API_BASE_URL")
-    api_key = _required_env("API_KEY")
-    client = OpenAI(base_url=api_base_url, api_key=api_key)
+    client = OpenAI(base_url=os.environ["API_BASE_URL"], api_key=os.environ["API_KEY"])
     image_name = _resolve_local_image_name()
 
     env: ApiSecurityOpenenvEnv | None = None

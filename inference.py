@@ -97,8 +97,10 @@ def _probe_llm_proxy_http_fallback() -> None:
         try:
             with urllib.request.urlopen(request, timeout=12):
                 return
-        except urllib.error.HTTPError:
-            # Even non-2xx codes confirm an authenticated request reached the proxy.
+        except urllib.error.HTTPError as exc:
+            # Retry alternate URL shape on 404; other HTTP codes still confirm proxy reachability.
+            if exc.code == 404:
+                continue
             return
         except Exception:
             continue

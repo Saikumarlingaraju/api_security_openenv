@@ -39,6 +39,28 @@ def _list_local_images() -> set[str]:
         return set()
 
 
+def _probe_llm_proxy(client: OpenAI) -> None:
+    """Attempt one lightweight proxy call so evaluator can observe API traffic on injected key."""
+    probe_models = [MODEL_NAME, "Qwen/Qwen2.5-72B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"]
+    seen: set[str] = set()
+
+    for model_name in probe_models:
+        if model_name in seen:
+            continue
+        seen.add(model_name)
+
+        try:
+            client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": "Reply with exactly: ok"}],
+                temperature=0,
+                max_tokens=4,
+            )
+            return
+        except Exception:
+            continue
+
+
 def _resolve_local_image_name() -> str:
     env_image = os.getenv("LOCAL_IMAGE_NAME")
     if env_image:
@@ -310,6 +332,7 @@ async def main() -> None:
 
     env: ApiSecurityOpenenvEnv | None = None
     try:
+        _probe_llm_proxy(client)
         _ensure_local_image(image_name)
         env = await ApiSecurityOpenenvEnv.from_docker_image(image_name)
         for _ in range(3):

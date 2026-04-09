@@ -12,9 +12,10 @@ from models import ApiSecurityOpenenvAction
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
+API_KEY = os.getenv("API_KEY") or HF_TOKEN
 
-if not HF_TOKEN:
-    raise ValueError("HF_TOKEN environment variable is required")
+if not API_KEY:
+    raise ValueError("API_KEY or HF_TOKEN environment variable is required")
 
 BENCHMARK = "api_security_openenv"
 MAX_STEPS = 3
@@ -289,7 +290,7 @@ async def run_episode(env: ApiSecurityOpenenvEnv, client: OpenAI) -> tuple[str, 
 
 
 async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     image_name = _resolve_local_image_name()
 
     env: ApiSecurityOpenenvEnv | None = None

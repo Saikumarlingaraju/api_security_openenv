@@ -163,9 +163,18 @@ TASKS: list[TaskSpec] = [
     ),
 ]
 
+OPEN_INTERVAL_MIN_SCORE = 0.01
+OPEN_INTERVAL_MAX_SCORE = 0.99
+
 
 def _normalize(text: str) -> str:
     return " ".join(text.lower().strip().split())
+
+
+def _to_open_interval(score: float) -> float:
+    """Map a clamped [0,1] score into strict open interval (0,1)."""
+    clamped = max(0.0, min(1.0, score))
+    return OPEN_INTERVAL_MIN_SCORE + (OPEN_INTERVAL_MAX_SCORE - OPEN_INTERVAL_MIN_SCORE) * clamped
 
 
 class ApiSecurityOpenenvEnvironment(Environment):
@@ -226,6 +235,8 @@ class ApiSecurityOpenenvEnvironment(Environment):
             if progress_bonus > 0.0:
                 breakdown["progress_bonus"] = progress_bonus
             self._best_score = score
+
+        score = _to_open_interval(score)
 
         done = score >= 0.95 or self._steps_in_episode >= self._current_task.max_steps
         self._last_feedback = feedback

@@ -39,8 +39,8 @@ def main() -> None:
         result = env.step(action)
         score = float(result.reward or 0.0)
 
-        if not (0.0 <= score <= 1.0):
-            raise ValueError(f"Score out of range for {task_id}: {score}")
+        if not (0.0 < score < 1.0):
+            raise ValueError(f"Score must be strictly between 0 and 1 for {task_id}: {score}")
 
         measured_scores[task_id] = score
 
